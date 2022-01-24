@@ -3,7 +3,8 @@ module Vector3 (
     (£+), (£-), (£*), (£.), (££), (£$), (@@),
     norm, veclen, normalise,
     vec3x, vec3y, vec3z,
-    gradient, vmean
+    gradient, vmean,
+    isZero
 )
 where
 
@@ -60,3 +61,7 @@ gradient u v t = (1-t) £* u £+ t £* v
 
 vmean :: (Fractional a) => [Vec3 a] -> Vec3 a
 vmean vs = (1.0 / fromIntegral (length vs)) £* (foldl1 (£+) vs)
+
+-- swag stuff
+isZero :: (Num a, Eq a) => Vec3 a -> Bool
+isZero = (==) (fromIntegral 0, fromIntegral 0, fromIntegral 0)
