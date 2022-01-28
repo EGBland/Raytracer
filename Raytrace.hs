@@ -29,8 +29,8 @@ a / b = fromIntegral a P./ fromIntegral b
 -- hard-coded image/camera things
 tLimits = (0.001,10000) :: (VecType,VecType)
 
-imageWidth  = 400 :: Int
-imageHeight = 300 :: Int
+imageWidth  = 1280 :: Int
+imageHeight = 720 :: Int
 aspectRatio = imageWidth / imageHeight :: VecType
 
 viewportHeight    = 2.0 :: VecType
@@ -46,10 +46,11 @@ myMat2 = M.pack ( (0.5,0.8,0.5)::Diffuse )
 mySpecular = M.pack ( 0.2::Specular )
 mySpecular2 = M.pack ( 0::Specular )
 myWorld = [
-    (H.pack ( ((-0.8,0,-1),0.3)::Sphere ), mySpecular2),
-    (H.pack ( ((0,0,-1),0.3)::Sphere ), myMat),
-    (H.pack ( ((0.8,0,-1),0.3)::Sphere ), mySpecular),
-    (H.pack ( ((0,-100.5,-1),100)::Sphere ), myMat2)
+    (H.pack ( ((-1.5,-0.3,-3),0.7)::Sphere ), mySpecular2),
+    (H.pack ( ((0,-0.3,-4),0.7)::Sphere ), myMat),
+    (H.pack ( ((1.3,-0.3,-2),0.7)::Sphere ), mySpecular),
+    --(H.pack ( ((0,-100.5,-1),100)::Sphere ), myMat2)
+    (H.pack ( ((-1,-1,0),(1,-1,0),(0,-1,-1))::Plane ), myMat2)
     ]
 
 
@@ -117,8 +118,8 @@ getRay x y = (origin, normalise $ lower_left_corner £+ ((x/imageWidth) £* hori
 getJitterVector :: (RandomGen g) => g -> (Vector,g)
 getJitterVector g=
     let
-        (jx,g2) = uniformR (-1/imageWidth::VecType,1/imageHeight::VecType) g
-        (jy,g3) = uniformR (-1/imageWidth::VecType,1/imageHeight::VecType) g2
+        (jx,g2) = uniformR (-1/(2*imageWidth)::VecType,1/(2*imageWidth)::VecType) g
+        (jy,g3) = uniformR (-1/(2*imageHeight)::VecType,1/(2*imageHeight)::VecType) g2
     in
         ((jx*viewportWidth,jy*viewportHeight,0),g3)
 
@@ -132,7 +133,7 @@ myHeckingMonaderino rng fileHandle y = ((hPutStr fileHandle) . concat . (map wri
 
 main = do
     let rng = mkStdGen 420
-    fileHandle <- openFile "C:\\Users\\Liz\\Documents\\image.ppm" WriteMode
+    fileHandle <- openFile "image.ppm" WriteMode
     hPutStr fileHandle imageHeader
     let img = (map $ myHeckingMonaderino rng fileHandle) . reverse $ [0..imageHeight-1]
 

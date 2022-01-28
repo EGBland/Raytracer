@@ -1,7 +1,8 @@
 module Raylude (
     VecType, Point, Vector, Ray, Colour, Pixel,
     pixelToColour, colourToPixel,
-    mergeMaybe2ple, mergeMaybe3ple
+    mergeMaybe2ple, mergeMaybe3ple,
+    fst3, snd3, trd3
 )
 where
 
@@ -49,3 +50,13 @@ mergeMaybe3ple (a,b,c) = do
     b' <- b
     c' <- c
     return (a', b', c')
+
+-- 3-tuple manip
+fst3 :: (a,b,c) -> a
+fst3 (a,_,_) = a
+
+snd3 :: (a,b,c) -> b
+snd3 (_,b,_) = b
+
+trd3 :: (a,b,c) -> c
+trd3 (_,_,c) = c
