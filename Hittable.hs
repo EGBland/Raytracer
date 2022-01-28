@@ -2,72 +2,54 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 module Hittable (
+    Hittable, HitRecord, hit, normal,
     pack,
-    Hittable, HitRecord, hits, normal,
-    Sphere, Plane,
-    Vec3, Ray, VecType
+    Sphere
 )
 where
 
+import Data.List (minimum)
+
 import Raylude
-import qualified Vector3
-import Vector3 ( (£+), (£-), (£*), (£.), (££), (£$), (@@), norm, normalise, gradient, vec3x, vec3y, vec3z, vmean, isZero )
-import SimEq
+import Vector3 hiding (Vec3)
 
-type Sphere = (Vec3, VecType)
-type Plane = (Vec3, Vec3, Vec3)
 
-type Point = Vec3
-type ParamT = VecType
-type Normal = Vec3
-type HitRecord = (ParamT,Hittable,Normal)
+type HitRecord = (VecType,Hittable,Vector) -- (t,object hit,normal)
 
+-- Hit typeclass and Hittable type, with pack function
 class Hit a where
-    hits   :: Ray -> a -> Maybe HitRecord
-    normal :: a -> Point -> Normal
+    hit    :: (VecType, VecType) -> Ray -> a -> Maybe HitRecord
+    normal :: a -> Point -> Vector
 
 data Hittable = forall a. (Hit a) => Hittable a
 
 instance Hit Hittable where
-    x `hits` (Hittable a) = x `hits` a
+    hit ts r (Hittable a) = hit ts r a
     normal (Hittable a) = normal a
 
 pack :: (Hit a, Eq a) => a -> Hittable
 pack = Hittable
 
 
--- utility fn
-mergeMaybe3ple :: (Maybe a, Maybe b, Maybe c) -> Maybe (a,b,c)
-mergeMaybe3ple (a,b,c) = do
-    a' <- a
-    b' <- b
-    c' <- c
-    return (a',b',c')
+-- Hit instances
 
--- instances
+-- sphere
+type Sphere = (Point,VecType)
 
 instance Hit Sphere where
-    (origin,direction) `hits` sph
-        | discriminant < 0 = Nothing
-        | otherwise = mergeMaybe3ple (closestT, Just (pack (sph :: Sphere)), theNormal)
-        where (centre,radius) = sph
-              a = direction £. direction
-              b = 2 * (direction £. (origin £- centre))
-              c = (origin £- centre) £. (origin £- centre) - (radius*radius)
-              discriminant = b*b - 4*a*c
-              hitTs = filter (>0.001) $ [(-b - sqrt discriminant) / (2*a), (-b + sqrt discriminant) / (2*a)]
-              closestT = if hitTs == [] then Nothing else Just (minimum hitTs)
-              theNormal = ((normal (centre,radius)) . ((origin,direction)@@)) <$> closestT
-    
-    normal (c,_) p = normalise (p £- c)
+    hit (tMin,tMax) (o,d) (c,r)
+        | qd < 0 = Nothing
+        | otherwise = mergeMaybe3ple (closestT, Just (pack ((c,r) :: Sphere)), theNormal)
+        where qa = d £. d
+              qb = 2 * (d £. (o £- c))
+              qc = (o £- c) £. (o £- c) - (r*r)
+              qd = qb * qb - 4 * qa * qc
+              hitTs = filter (\x -> (x>tMin) && (x<tMax)) [(-qb-sqrt qd) / (2*qa), (-qb+sqrt qd) / (2*qa)]
+              closestT = if null hitTs then Nothing else Just (minimum hitTs)
+              intersection = ((o,d)@@) <$> closestT
+              theNormal = ((£$) (negate . signum)) . (normal (c,r)) <$> intersection
+              --theNormal = if theOuterNormal £. d < 0 then theOuterNormal else ((£$) negate) <$> theOuterNormal
 
-instance Hit Plane where
-    ((ox,oy,oz),(dx,dy,dz)) `hits` plane
-        | isZero (a,b,c) = Nothing
-        | otherwise = if t < 0.001 then Nothing else Just (t, pack (plane :: Plane), (a,b,c))
-        where (p1,p2,p3) = plane
-              (a,b,c) = normal (p1,p2,p3) (0,0,0)
-              d = (a,b,c) `eval` p1
-              t = (a*ox + b*oy + c*oz + d) / (a*dx + b*dy + c*dz)
-    
-    normal (p1,p2,p3) _ = normalise $ (p1 £- p2) ££ (p1 £- p3)
+    normal (c,_) p = normalise $ p £- c
+
+-- \x -> (x>tMin) && (x<tMax)

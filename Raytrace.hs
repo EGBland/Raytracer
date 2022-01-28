@@ -1,110 +1,144 @@
-{-# LANGUAGE FlexibleInstances #-}
+-- The flow of the program is roughly:
+-- main -> drawLine -> sample -> rayColour
 
-import Control.Monad (sequence_)
-import Data.List (minimum, minimumBy)
-import Data.Maybe (isNothing, fromJust)
+import Prelude hiding ((/))
+import qualified Prelude as P
+
+import Data.List (minimumBy)
+import Data.Maybe (fromJust, fromMaybe, isNothing)
 import Data.Ord (comparing)
-import System.Random
-import Data.UnixTime
-import Text.Printf
+import System.IO
+import System.Random (RandomGen, mkStdGen, uniformR)
+import Text.Printf (printf)
 
-import Raylude
-import qualified Vector3
-import Vector3 ( (£+), (£-), (£*), (£.), (££), (£$), (@@), norm, normalise, gradient, vec3x, vec3y, vec3z, vmean )
-import Hittable
+import Hittable hiding (pack)
+import qualified Hittable as H
+import Material hiding (pack)
+import qualified Material as M
 import Random
+import Raylude
+import Vector3
 
-type World = [Hittable]
+type World = [(Hittable,Material)]
 
-
--- utility stuff
-mergeMaybe2ple :: (Maybe a, Maybe b) -> Maybe (a,b)
-mergeMaybe2ple (a,b) = do
-    a' <- a
-    b' <- b
-    return (a',b')
-
-clamp :: (Ord a) => a -> a -> a -> a
-clamp theMin theMax x
-    | x < theMin = theMin
-    | x > theMax = theMax
-    | otherwise  = x
-
--- image stuff
-createP3 :: Int -> Int -> [Pixel] -> String
-createP3 width height pixels = (printf "P3\n%d\t%d\t255\n" width height) ++ (concat . (map writePixel) $ pixels)
-
-writePixel :: Pixel -> String
-writePixel (r,g,b) = printf "%d\t%d\t%d" r g b
-
-gammaCorrect :: Vec3 -> Pixel
-gammaCorrect = (£$) $ floor . (*255) . sqrt . (clamp 0 1)
-
-colourFuncDiffuse :: World -> Ray -> [Vec3] -> Pixel
-colourFuncDiffuse world ray nextRays = gammaCorrect $ colourFuncDiffuse' world ray nextRays
-
-colourFuncDiffuse' :: World -> Ray -> [Vec3] -> Vec3
-colourFuncDiffuse' world (o,d) [] = (0,0,0)
-colourFuncDiffuse' world (o,d) (nextRay:rays)
-    | isNothing closestHit = let t = vec3y d in gradient (0.5, 0.7, 1.0) (1.0,1.0,1.0) (0.5 * (t + 1.0))
-    | otherwise = let (chT,chObj,theNormal) = fromJust closestHit
-                      intersection = (o,d) @@ chT
-                      diffuseRay = (intersection, normalise $ nextRay £+ theNormal)
-                      nextColour = colourFuncDiffuse' world diffuseRay rays
-                      in 0.5 £* nextColour
-    where theHits = filter (not . isNothing) . map (hits (o,d)) $ world
-          closestHit = if null theHits then Nothing else minimumBy (comparing (fmap (\(x,_,_)->x))) theHits
-
-sampleSingleDiffuse :: (RandomGen g) => World -> Int -> Int -> g -> (Pixel,g)
-sampleSingleDiffuse world x y g = let offset        = ((fromIntegral x / fromIntegral imageWidth) £* horizontal) £+ ((fromIntegral y / fromIntegral imageHeight) £* vertical) £- origin
-                                      ray           = (origin, normalise $ lower_left_corner £+ offset)
-                                      (nextRays,g2) = foldr (\_ (rays,g) -> let (nr,g2) = randomUnit g in (nr:rays,g2)) ([],g) [1..20]
-                                      in (colourFuncDiffuse world ray nextRays,g2)
-
-sampleMSAADiffuse :: (RandomGen g) => World -> Int -> Int -> g -> (Pixel,g)
-sampleMSAADiffuse world x y g = let noSamples = 100
-                                    noDiffuses = 50
-                                    getOffset :: VecType -> VecType -> Vec3
-                                    getOffset ox oy = (((ox + fromIntegral x) / fromIntegral imageWidth) £* horizontal) £+ (((oy + fromIntegral y) / fromIntegral imageHeight) £* vertical) £- origin
-                                    (jxs,g2) = uniformRs noSamples (-1::VecType,1::VecType) g
-                                    (jys,g3) = uniformRs noSamples (-1::VecType,1::VecType) g2
-                                    (nextRays,g4) = foldr (\_ (rays,g) -> let (nr,g2) = randomUnit g in (nr:rays,g2)) ([],g3) [1..noDiffuses]
-                                    jitters = zip jxs jys
-                                    sampleRays = map (\(ox,oy) -> (origin, normalise $ lower_left_corner £+ (getOffset ox oy))) jitters
-                                    samples = map (((£$) fromIntegral) . (\x -> colourFuncDiffuse world x nextRays)) sampleRays
-                                    in (((£$) floor) . vmean $ samples,g4)
+-- shortcut things
+(/) :: (Integral a, Fractional b) => a -> a -> b
+a / b = fromIntegral a P./ fromIntegral b
 
 
--- hard-coded image stuff
-imageWidth = 400 :: Int
+-- hard-coded image/camera things
+tLimits = (0.001,10000) :: (VecType,VecType)
+
+imageWidth  = 400 :: Int
 imageHeight = 300 :: Int
+aspectRatio = imageWidth / imageHeight :: VecType
 
-myWorld = [
-    pack (( (0,0,-1), 0.5 )::Sphere),
-    pack (((-0.933,-1.25,0),(0.799,-0.25,0),(-0.0670,-0.75,-1))::Plane)
-    ] :: World
-
-
--- hard-coded camera stuff
-viewportHeight    = 2.0                                                  :: VecType
-aspectRatio       = (fromIntegral imageWidth / fromIntegral imageHeight) :: VecType
-viewportWidth     = viewportHeight * aspectRatio                         :: VecType
-focalLength       = 1.0                                                  :: VecType
-origin            = (0,0,0)                                              :: Vec3
-horizontal        = (viewportWidth, 0, 0)                                :: Vec3
-vertical          = (0, viewportHeight, 0)                               :: Vec3
+viewportHeight    = 2.0 :: VecType
+viewportWidth     = (viewportHeight * aspectRatio) :: VecType
+focalLength       = 1.0 :: VecType
+origin            = (0,0,0) :: Point
+horizontal        = (viewportWidth, 0, 0) :: Vector
+vertical          = (0, viewportHeight, 0) :: Vector
 lower_left_corner = origin £- (0.5 £* horizontal) £- (0.5 £* vertical) £- (0,0,focalLength)
 
+myMat = M.pack ( (0.9,0.8,0.5)::Diffuse )
+myMat2 = M.pack ( (0.5,0.8,0.5)::Diffuse )
+mySpecular = M.pack ( 0.2::Specular )
+mySpecular2 = M.pack ( 0::Specular )
+myWorld = [
+    (H.pack ( ((-0.8,0,-1),0.3)::Sphere ), mySpecular2),
+    (H.pack ( ((0,0,-1),0.3)::Sphere ), myMat),
+    (H.pack ( ((0.8,0,-1),0.3)::Sphere ), mySpecular),
+    (H.pack ( ((0,-100.5,-1),100)::Sphere ), myMat2)
+    ]
 
-testImageDiffuseLine :: Int -> Int -> Int -> Int -> [Pixel]
-testImageDiffuseLine width height line seed = fst $ foldr (\(x,y) (pxs,g) -> let (px,g2) = sampleMSAADiffuse myWorld x y g in (px:pxs,g2)) ([],mkStdGen seed) [(x,line) | x <- reverse [0..imageWidth-1]]
+
+-- image writing functions
+-- |Get the header for the PPM file.
+imageHeader = (printf "P3\n%d\t%d\t255\n" imageWidth imageHeight) :: String
+
+-- |Get a PPM pixel.
+writePixel :: Pixel -> String
+writePixel (r,g,b) = printf "%d\t%d\t%d\n" r g b
+
+
+-- colour functions
+-- |Get the colour of the background, that is, if the ray hits no objects.
+bgColour :: Ray -> Colour
+bgColour (o,d) =
+    let
+        t            = 0.5 * (1 + vec3y d)
+        --colourTop    = pixelToColour (0xd7, 0x02, 0x70)
+        colourTop = (0.5, 0.7, 1.0) 
+        --colourBottom = pixelToColour (0x00, 0x38, 0xa8)
+        colourBottom = (1.0,1.0,1.0)
+    in
+        gradient colourBottom colourTop t
+
+-- |Convert a normalised vector to a colour
+normal2rgb :: Vector -> Colour
+normal2rgb = (£$) ((*0.5) . (+1))
+
+-- |Gamma correct a colour
+gammaCorrect :: Colour -> Colour
+gammaCorrect = (£$) sqrt
+
+rayColour :: (RandomGen g) => g -> World -> Ray -> (Pixel,g)
+rayColour g world (o,d) =
+    let
+        noSamples = 100
+        maxDepth = 50
+        accFunc :: (RandomGen g) => a -> ([Colour],g) -> ([Colour],g)
+        accFunc _ (acc,g) = let (jitter,g2) = getJitterVector g
+                                (c,g3) = rayColour' g2 world (o,d £+ jitter) maxDepth
+                                in (c:acc,g3)
+        (samples,g4) = foldr accFunc ([],g) [1..noSamples]
+    in
+        (colourToPixel . gammaCorrect . vmean $ samples,g4)
+
+-- |Calculate the colour of a particular ray
+rayColour' :: (RandomGen g) => g -> World -> Ray -> Int -> (Colour,g)
+rayColour' g world ray depth
+    | isNothing closestHit = (bgColour ray,g)
+    | depth == 0 = ((0,0,0),g)
+    | otherwise = let (hr,mat) = fromJust closestHit
+                      (scatterResult,g2) = scatter mat g ray hr
+                      nextColourResult = (\(c,s) -> let (c2,g2) = rayColour' g world s (depth-1) in (c £** c2,g2)) <$> scatterResult
+                      in fromMaybe ((0,0,0),g2) nextColourResult
+    where hits = (filter $ not . isNothing) . (map (\(obj,mat) -> mergeMaybe2ple (hit tLimits ray obj,Just mat))) $ world
+          closestHit = if null hits then Nothing else minimumBy (comparing $ fmap $ \((x,_,_),_) -> x) hits
+
+
+-- drawing functions
+-- |Get a ray that passes through pixel (x,y) of the image
+getRay :: Int -> Int -> Ray
+getRay x y = (origin, normalise $ lower_left_corner £+ ((x/imageWidth) £* horizontal) £+ ((y/imageHeight) £* vertical) £- origin)
+
+getJitterVector :: (RandomGen g) => g -> (Vector,g)
+getJitterVector g=
+    let
+        (jx,g2) = uniformR (-1/imageWidth::VecType,1/imageHeight::VecType) g
+        (jy,g3) = uniformR (-1/imageWidth::VecType,1/imageHeight::VecType) g2
+    in
+        ((jx*viewportWidth,jy*viewportHeight,0),g3)
+
+-- |Draw a single line of the image (0,y) -> (imageWidth-1,y)
+drawLine :: (RandomGen g) => g -> Int -> [Pixel]
+drawLine g y = map (fst . (rayColour g myWorld)) [getRay x y | x <- [0..imageWidth-1]]
+
+
+myHeckingMonaderino :: (RandomGen g) =>  g -> Handle -> Int -> IO ()
+myHeckingMonaderino rng fileHandle y = ((hPutStr fileHandle) . concat . (map writePixel) . (drawLine rng) $ y) >> (putStrLn $ printf "%d lines remaining" y)
 
 main = do
-    putStrLn $ printf "P3\n%d\t%d\t255" imageWidth imageHeight
-    time <- getUnixTime
-    let seed = fromEnum . utMicroSeconds $ time
-    let lineseeds = zip (reverse [0..imageHeight-1]) . fst $ uniformRs imageHeight (minBound::Int,maxBound::Int) (mkStdGen seed)
-    let f = (\(y,seed) -> testImageDiffuseLine imageWidth imageHeight y seed) :: (Int,Int) -> [Pixel]
-    let lines = concat $ map f lineseeds
-    
-    sequence_ (map (putStrLn . writePixel) lines)
+    let rng = mkStdGen 420
+    fileHandle <- openFile "C:\\Users\\Liz\\Documents\\image.ppm" WriteMode
+    hPutStr fileHandle imageHeader
+    let img = (map $ myHeckingMonaderino rng fileHandle) . reverse $ [0..imageHeight-1]
+
+    sequence_ img
+    hClose fileHandle
+
+    --writeFile "C:\\Users\\Liz\\Documents\\image.ppm" $ imageHeader ++ (concat img)
+
+--main = writeFile  $ imageHeader ++ (concat $ map (writePixel . bgColour) rays)
