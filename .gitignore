@@ -1,0 +1,8 @@
+*.hi
+*.o
+*.exe
+*.ppm
+*.jpg
+*.png
+dist-newstyle/
+.vs/
